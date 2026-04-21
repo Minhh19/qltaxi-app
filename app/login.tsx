@@ -3,16 +3,16 @@ import axios from "axios";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-    ActivityIndicator,
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View,
+  ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
 } from "react-native";
 
 export default function Login() {
@@ -31,7 +31,7 @@ export default function Login() {
     try {
       setLoading(true);
 
-      const res = await axios.post("http://192.168.0.100:8080/auth/login", {
+      const res = await axios.post("http://192.168.1.50:8080/auth/login", {
         username: username.trim(),
         password: password.trim(),
       });
@@ -40,6 +40,7 @@ export default function Login() {
       const role = res.data.role;
 
       console.log("LOGIN SUCCESS:", res.data);
+      console.log("ROLE:", role);
 
       // 💾 lưu
       await AsyncStorage.setItem("token", token);

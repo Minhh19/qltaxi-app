@@ -2,11 +2,14 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+
+    "baseUrl": ".",   // 🔥 THÊM CÁI NÀY
+
     "paths": {
-      "@/*": [
-        "./*"
-      ]
-    }
+      "@/*": ["./*"]
+    },
+
+    "types": ["expo-router"]  // 🔥 THÊM CÁI NÀY
   },
   "include": [
     "**/*.ts",

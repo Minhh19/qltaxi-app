@@ -2,15 +2,15 @@ import axios from "axios";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
 } from "react-native";
 
 export default function Register() {
@@ -24,7 +24,7 @@ export default function Register() {
 
   const handleRegister = async () => {
     try {
-      await axios.post("http://192.168.0.100:8080/auth/register", {
+      await axios.post("http://192.168.1.50:8080/auth/register", {
         username: username.trim(),
         password: password.trim(),
         phone: phone.trim(),
