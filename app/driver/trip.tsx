@@ -1,214 +1,332 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
+import * as Location from "expo-location";
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import {
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import MapView, { Marker, Polyline } from "react-native-maps";
+
+const BASE_URL = "http://192.168.0.103:8080";
 
 export default function DriverTrip() {
-const [trip, setTrip] = useState<any>(null);
-const [location, setLocation] = useState<any>(null);
+  const router = useRouter();
 
-// ===== FETCH TRIP =====
-const fetchTrip = async () => {
-try {
-const token = await AsyncStorage.getItem("token");
+  const [trip, setTrip] = useState<any>(null);
+  const [location, setLocation] = useState<any>(null);
+  const [routeCoords, setRouteCoords] = useState<any[]>([]);
+  const [isNavigating, setIsNavigating] = useState(false);
 
+  // ===== FETCH TRIP =====
+  const fetchTrip = async () => {
+    const token = await AsyncStorage.getItem("token");
 
-  const res = await axios.get(
-    "http://192.168.1.50:8080/trips/driver/my-trip",
-    {
-      headers: { Authorization: `Bearer ${token}` },
+    try {
+      const res = await axios.get(`${BASE_URL}/trips/driver/my-trip`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      // 🔥 FIX: không set null khi API trả []
+      if (!res.data || res.data.length === 0) {
+        return;
+      }
+
+      setTrip(res.data[0]);
+    } catch (err) {
+      console.log("❌ FETCH TRIP:", err);
     }
-  );
+  };
 
-  setTrip(res.data[0]);
+  // ===== GPS =====
+  const startTracking = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") return;
 
-  // set vị trí ban đầu = pickup (để không bị null)
-  if (!location && res.data[0]) {
-    setLocation({
-      latitude: res.data[0].pickupLatitude,
-      longitude: res.data[0].pickupLongitude,
-    });
+    Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 2000,
+        distanceInterval: 5,
+      },
+      (loc) => {
+        const coords = loc.coords;
+
+        setLocation({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        });
+
+        sendLocation(coords);
+      }
+    );
+  };
+
+  // ===== SEND LOCATION =====
+  const sendLocation = async (coords: any) => {
+    const token = await AsyncStorage.getItem("token");
+
+    try {
+      await axios.put(
+        `${BASE_URL}/driver/location?latitude=${coords.latitude}&longitude=${coords.longitude}`,
+        {},
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+    } catch (err) {
+      console.log("❌ SEND LOCATION:", err);
+    }
+  };
+
+  // ===== FETCH ROUTE =====
+  const fetchRoute = async (start: any, end: any) => {
+    if (
+      !start ||
+      !end ||
+      start.latitude == null ||
+      start.longitude == null ||
+      end.latitude == null ||
+      end.longitude == null
+    ) {
+      return;
+    }
+
+    try {
+      const res = await axios.get(
+        `http://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson`
+      );
+
+      const coords = res.data.routes[0].geometry.coordinates;
+
+      const route = coords.map((c: any) => ({
+        latitude: c[1],
+        longitude: c[0],
+      }));
+
+      setRouteCoords(route);
+    } catch (err) {
+      console.log("❌ ROUTE ERROR:", err);
+    }
+  };
+
+  // ===== START PICKUP =====
+  const handleGoPickup = async () => {
+  await callApi(`/trips/${trip.id}/start`);
+  setIsNavigating(true);
+};
+const handlePicked = async () => {
+  await callApi(`/trips/${trip.id}/pickup`);
+  };
+  // ===== COMPLETE =====
+const handleComplete = async () => {
+  try {
+
+    const token = await AsyncStorage.getItem("token");
+
+    await axios.post(
+      `${BASE_URL}/trips/${trip.id}/complete`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    alert("🎉 Hoàn thành chuyến");
+
+    // reset toàn bộ state
+    setTrip(null);
+
+    setRouteCoords([]);
+
+    setIsNavigating(false);
+
+    // quay về trạng thái ban đầu
+    router.replace("/driver");
+
+  } catch (err: any) {
+
+    console.log("❌ COMPLETE ERROR:", err.response || err);
+
+    alert(
+      err.response?.data?.message ||
+      err.response?.data ||
+      err.message
+    );
+  }
+};
+  // ===== API =====
+  const callApi = async (url: string) => {
+    const token = await AsyncStorage.getItem("token");
+
+    try {
+      await axios.post(`${BASE_URL}${url}`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      fetchTrip();
+    } catch (err) {
+      console.log("❌ API ERROR:", err);
+    }
+  };
+
+  // ===== LOGOUT =====
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem("token");
+    await AsyncStorage.removeItem("role");
+    router.replace("/login");
+  };
+
+  // ===== INIT =====
+  useEffect(() => {
+    fetchTrip();
+    startTracking();
+
+    const interval = setInterval(fetchTrip, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ===== ROUTE LOGIC =====
+  useEffect(() => {
+    if (!location || !trip) return;
+
+    const pickup = {
+      latitude: trip.pickupLat,
+      longitude: trip.pickupLng,
+    };
+
+    const dropoff = {
+      latitude: trip.dropoffLat,
+      longitude: trip.dropoffLng,
+    };
+
+    // 👉 chỉ gọi khi cần
+    if (trip.status === "PICKUP" || isNavigating) {
+      fetchRoute(location, pickup);
+    }
+
+    if (trip.status === "IN_PROGRESS") {
+      fetchRoute(location, dropoff);
+    }
+  }, [location, trip, isNavigating]);
+
+  if (!trip || !location) {
+    return (
+      <View style={styles.center}>
+        <Text>Loading...</Text>
+      </View>
+    );
   }
 
-} catch (err) {
-  console.log("FETCH TRIP ERROR:", err);
-}
+  return (
+    <View style={styles.container}>
+      <MapView
+        style={StyleSheet.absoluteFillObject}
+        region={{
+          latitude: location.latitude,
+          longitude: location.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        }}
+      >
+        {/* Driver */}
+        <Marker coordinate={location} title="Driver" />
 
 
-};
+        {/* Route */}
+        {routeCoords.length > 0 && (
+          <Polyline
+            coordinates={routeCoords}
+            strokeWidth={4}
+            strokeColor="blue"
+          />
+        )}
+      </MapView>
 
-// ===== INIT =====
-useEffect(() => {
-fetchTrip();
-const interval = setInterval(fetchTrip, 3000);
-return () => clearInterval(interval);
-}, []);
+      {/* Logout */}
+      {(trip.status === "PICKUP" || trip.status === "IN_PROGRESS") && (
+        <TouchableOpacity style={styles.logout} onPress={handleLogout}>
+          <Text style={{ color: "#fff" }}>Logout</Text>
+        </TouchableOpacity>
+      )}
 
-if (!trip || !location) {
-return ( <View style={styles.center}> <Text>Loading...</Text> </View>
-);
-}
+      {/* UI */}
+      <View style={styles.bottom}>
+        <Text>Status: {trip.status}</Text>
 
-// ===== DESTINATION =====
-const destination =
-trip.status === "ACCEPTED" || trip.status === "PICKUP"
-? {
-latitude: trip.pickupLatitude,
-longitude: trip.pickupLongitude,
-}
-: {
-latitude: trip.dropoffLatitude,
-longitude: trip.dropoffLongitude,
-};
+        {trip.status === "ACCEPTED" && (
+          <TouchableOpacity style={styles.button} onPress={handleGoPickup}>
+            <Text style={styles.buttonText}>🚕 Đi đón khách</Text>
+          </TouchableOpacity>
+        )}
+        {trip.status === "PICKUP" && (
+  <TouchableOpacity
+    style={styles.button}
+    onPress={handlePicked}
+  >
+    <Text style={styles.buttonText}>
+      ✅ Đã đón khách
+    </Text>
+  </TouchableOpacity>
+)}
 
-// ===== API =====
-const callApi = async (url: string) => {
-try {
-const token = await AsyncStorage.getItem("token");
-
-
-  await axios.post(
-    `http://192.168.1.50:8080${url}`,
-    {},
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
+{trip.status === "IN_PROGRESS" && (
+  <TouchableOpacity
+    style={styles.button}
+    onPress={handleComplete}
+  >
+    <Text style={styles.buttonText}>
+      🏁 Hoàn thành chuyến
+    </Text>
+  </TouchableOpacity>
+)}
+      </View>
+    </View>
   );
-
-  fetchTrip();
-} catch (err: any) {
-  console.log(err.response || err);
-  alert(err.response?.data || err.message);
-}
-
-
-};
-
-// ===== ACTIONS =====
-const handleGoPickup = () => callApi(`/trips/${trip.id}/start`);
-const handlePicked = () => callApi(`/trips/${trip.id}/pickup`);
-const handleComplete = () => callApi(`/trips/${trip.id}/complete`);
-
-// ===== TELEPORT (TEST) =====
-const goToPickup = () => {
-setLocation({
-latitude: trip.pickupLatitude,
-longitude: trip.pickupLongitude,
-});
-};
-
-const goToDropoff = () => {
-setLocation({
-latitude: trip.dropoffLatitude,
-longitude: trip.dropoffLongitude,
-});
-};
-
-return ( <View style={styles.container}>
-{/* ===== MAP ===== */}
-<MapView
-style={StyleSheet.absoluteFillObject}
-region={{
-latitude: location.latitude,
-longitude: location.longitude,
-latitudeDelta: 0.01,
-longitudeDelta: 0.01,
-}}
->
-{/* 🚕 Driver */} <Marker coordinate={location} title="Driver" />
-
-
-    {/* 📍 Destination */}
-    <Marker coordinate={destination} title="Điểm đến" />
-  </MapView>
-
-  {/* ===== UI ===== */}
-  <View style={styles.bottom}>
-    <Text style={styles.title}>🚕 Driver Trip</Text>
-
-    <Text>Status: {trip.status}</Text>
-    <Text>📍 {trip.pickupAddress}</Text>
-    <Text>🏁 {trip.dropoffAddress}</Text>
-
-    {/* ===== BUTTON FLOW ===== */}
-    {trip.status === "ACCEPTED" && (
-      <TouchableOpacity style={styles.button} onPress={handleGoPickup}>
-        <Text style={styles.buttonText}>🚕 ĐI ĐÓN KHÁCH</Text>
-      </TouchableOpacity>
-    )}
-
-    {trip.status === "PICKUP" && (
-      <TouchableOpacity style={styles.button} onPress={handlePicked}>
-        <Text style={styles.buttonText}>✅ ĐÃ ĐÓN KHÁCH</Text>
-      </TouchableOpacity>
-    )}
-
-    {trip.status === "IN_PROGRESS" && (
-      <TouchableOpacity style={styles.button} onPress={handleComplete}>
-        <Text style={styles.buttonText}>🏁 HOÀN THÀNH</Text>
-      </TouchableOpacity>
-    )}
-
-    {/* ===== TEST BUTTON ===== */}
-    <TouchableOpacity style={styles.testBtn} onPress={goToPickup}>
-      <Text>🚀 ĐẾN PICKUP</Text>
-    </TouchableOpacity>
-
-    <TouchableOpacity style={styles.testBtn} onPress={goToDropoff}>
-      <Text>🏁 ĐẾN DROPOFF</Text>
-    </TouchableOpacity>
-
-  </View>
-</View>
-
-
-);
 }
 
 const styles = StyleSheet.create({
-container: { flex: 1 },
+  container: { flex: 1 },
 
-center: {
-flex: 1,
-justifyContent: "center",
-alignItems: "center",
-},
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
 
-bottom: {
-position: "absolute",
-bottom: 0,
-width: "100%",
-backgroundColor: "#fff",
-padding: 20,
-borderTopLeftRadius: 20,
-borderTopRightRadius: 20,
-},
+  bottom: {
+    position: "absolute",
+    bottom: 0,
+    width: "100%",
+    backgroundColor: "#fff",
+    padding: 20,
+  },
 
-title: {
-fontSize: 18,
-fontWeight: "bold",
-marginBottom: 10,
-},
+  button: {
+    marginTop: 10,
+    backgroundColor: "black",
+    padding: 15,
+    borderRadius: 10,
+    alignItems: "center",
+  },
 
-button: {
-marginTop: 10,
-backgroundColor: "#000",
-padding: 15,
-borderRadius: 10,
-alignItems: "center",
-},
+  buttonText: {
+    color: "#fff",
+    fontWeight: "bold",
+  },
 
-buttonText: {
-color: "#fff",
-fontWeight: "bold",
-},
-
-testBtn: {
-marginTop: 10,
-backgroundColor: "#ddd",
-padding: 10,
-borderRadius: 10,
-alignItems: "center",
-},
+  logout: {
+    position: "absolute",
+    top: 60,
+    right: 20,
+    backgroundColor: "red",
+    padding: 10,
+    borderRadius: 8,
+    zIndex: 999,
+  },
 });
